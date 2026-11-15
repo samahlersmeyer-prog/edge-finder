@@ -313,40 +313,86 @@ function addRiserLeg(idx, point) {
 }
 
 // ---------- bets ----------
-function logBet(entry) {
-  const suggested = entry.stake || 0;
-  const input = prompt(`Stake for:\n${entry.pick} ${M.fmtAm(entry.price)}\n\nSuggested: ${money(suggested)}`, suggested ? suggested.toFixed(2) : '');
-  if (input == null) return;
-  const stake = Number(input); if (!(stake > 0)) return toast('Enter a stake');
-  if (todayStaked() + stake > Number(settings.dailyLimit)) {
-    if (!confirm(`This puts you over your ${money(Number(settings.dailyLimit))} daily limit. Log anyway?`)) return;
-  }
-  bets.unshift({ id: Date.now(), date: new Date().toISOString(), status: 'open', ...entry, stake });
-  store.set('bets', bets); renderBets(); toast('Bet logged');
+// ---------- bet sheet (simple log form) ----------
+const DEFAULT_SOURCES = ['Me', 'Vatican', 'Buddy', 'Risers'];
+let sources = store.get('sources', DEFAULT_SOURCES);
+let sheetEntry = null, sheetSource = store.get('lastSource', 'Me');
+const parseOdds = (v) => Number(String(v).replace(/[^\d-]/g, '')) || 0;
+function openSheet(entry = {}) {
+  sheetEntry = entry;
+  $('#shTitle').textContent = entry.pick ? 'Log this bet' : 'Add a bet';
+  $('#shPick').value = entry.pick || '';
+  $('#shOdds').value = entry.price ? M.fmtAm(entry.price) : '';
+  $('#shStake').value = entry.stake ? entry.stake.toFixed(2) : (store.get('lastStake') || '');
+  if (entry.fromScan) sheetSource = 'Me';
+  renderSheetSources(); updateSheet();
+  $('#sheet').hidden = false; setTimeout(() => (entry.pick ? $('#shStake') : $('#shPick')).focus(), 50);
 }
+function renderSheetSources() {
+  if (!sources.includes(sheetSource)) sheetSource = sources[0];
+  $('#shSources').innerHTML = sources.map((x) => `<button type="button" data-src="${esc(x)}" class="${x === sheetSource ? 'on' : ''}">${esc(x)}</button>`).join('') + '<button type="button" data-src="__new">+ New</button>';
+}
+function updateSheet() {
+  const odds = parseOdds($('#shOdds').value), stake = Number($('#shStake').value) || 0;
+  $('#shPayout').textContent = odds && stake ? `Wins ${money(stake * (M.amToDec(odds) - 1))} · pays ${money(stake * M.amToDec(odds))}` : '';
+  $('#shWarn').textContent = stake && todayStaked() + stake > Number(settings.dailyLimit) ? `Heads up: this puts you over your ${money(Number(settings.dailyLimit))} daily limit.` : '';
+}
+function saveSheet() {
+  const pick = $('#shPick').value.trim(), odds = parseOdds($('#shOdds').value), stake = Number($('#shStake').value);
+  if (!pick) return toast('What did you bet?');
+  if (!odds || Math.abs(odds) < 100) return toast('Enter the odds, like +450 or -110');
+  if (!(stake > 0)) return toast('Enter how much you bet');
+  const e = sheetEntry || {};
+  const sameOdds = e.price === odds;
+  bets.unshift({ id: Date.now(), date: new Date().toISOString(), status: 'open', sport: e.sport || '', event: e.event || '',
+    pick, price: odds, stake, source: sheetSource, fairProb: sameOdds ? e.fairProb : undefined, ev: sameOdds ? e.ev : undefined });
+  store.set('bets', bets); store.set('lastSource', sheetSource); store.set('lastStake', stake);
+  $('#sheet').hidden = true; renderBets(); toast(`Saved under ${sheetSource}`);
+}
+const logBet = (entry) => openSheet({ ...entry, fromScan: true });
+
+// ---------- bets ----------
+let betFilter = 'All';
 function betProfit(b) { if (b.status === 'won') return b.stake * (M.amToDec(b.price) - 1); if (b.status === 'lost') return -b.stake; return 0; }
-function renderBets() {
-  const settled = bets.filter((b) => ['won', 'lost', 'push'].includes(b.status));
+function statsFor(list) {
+  const settled = list.filter((b) => ['won', 'lost', 'push'].includes(b.status));
   const staked = settled.reduce((s, b) => s + b.stake, 0);
   const profit = settled.reduce((s, b) => s + betProfit(b), 0);
-  const expected = settled.reduce((s, b) => s + b.stake * (b.ev || 0), 0);
-  const wins = settled.filter((b) => b.status === 'won').length, losses = settled.filter((b) => b.status === 'lost').length;
+  let streak = 0, worst = 0;
+  settled.slice().sort((a, b) => a.date.localeCompare(b.date)).forEach((b) => { if (b.status === 'lost') { streak++; worst = Math.max(worst, streak); } else if (b.status === 'won') streak = 0; });
+  return { n: list.length, wins: settled.filter((b) => b.status === 'won').length, losses: settled.filter((b) => b.status === 'lost').length,
+    staked, profit, roi: staked ? profit / staked : null, worst, open: list.filter((b) => b.status === 'open').reduce((s, b) => s + b.stake, 0),
+    best: settled.filter((b) => b.status === 'won').reduce((m, b) => Math.max(m, betProfit(b)), 0) };
+}
+function renderBets() {
+  const srcs = ['All', ...new Set([...sources, ...bets.map((b) => b.source || 'Me')])];
+  $('#betFilters').innerHTML = srcs.map((x) => `<button data-filter="${esc(x)}" class="${x === betFilter ? 'on' : ''}">${esc(x)}</button>`).join('');
+  const list = betFilter === 'All' ? bets : bets.filter((b) => (b.source || 'Me') === betFilter);
+  const st = statsFor(list);
   $('#betSummary').innerHTML = `
-    <div><b>${wins}-${losses}</b><small>Record</small></div>
-    <div><b class="${profit >= 0 ? 'good' : 'bad'}">${money(profit)}</b><small>Profit</small></div>
-    <div><b>${staked ? pct(profit / staked) : '—'}</b><small>ROI</small></div>
-    <div><b>${money(expected)}</b><small>Expected profit</small></div>
-    <div><b>${money(bets.filter((b) => b.status === 'open').reduce((s, b) => s + b.stake, 0))}</b><small>Open action</small></div>
-    <div><b>${money(todayStaked())} / ${money(Number(settings.dailyLimit))}</b><small>Today vs limit</small></div>`;
-  $('#betList').innerHTML = bets.map((b) => `<div class="bet ${b.status}">
-    <div><b>${esc(b.pick)}</b> <span class="muted">${M.fmtAm(b.price)}</span>
-      <div class="muted small">${esc(b.event || '')} · ${new Date(b.date).toLocaleDateString()} · ${money(b.stake)} · edge ${b.ev != null ? pct(b.ev) : '—'}</div></div>
-    <div class="status-btns">${['won', 'lost', 'push', 'open'].map((s) => `<button data-bet="${b.id}" data-status="${s}" class="${b.status === s ? 'on' : ''}">${s}</button>`).join('')}<button data-del="${b.id}">✕</button></div>
-  </div>`).join('') || '<p class="muted">No bets logged yet. Results here show whether your edge is real over time; give it 100+ bets before judging.</p>';
+    <div><b class="${st.profit >= 0 ? 'good' : 'bad'}">${st.profit >= 0 ? '+' : ''}${money(st.profit)}</b><small>Profit</small></div>
+    <div><b>${st.wins}-${st.losses}</b><small>Won-Lost</small></div>
+    <div><b>${st.roi == null ? '—' : pct(st.roi)}</b><small>ROI</small></div>
+    <div><b>${money(st.best)}</b><small>Biggest win</small></div>
+    <div><b>${st.worst}</b><small>Worst losing streak</small></div>
+    <div><b>${money(st.open)}</b><small>Still pending</small></div>`;
+  const rows = srcs.slice(1).map((x) => [x, statsFor(bets.filter((b) => (b.source || 'Me') === x))]).filter(([, v]) => v.n);
+  $('#bySource').innerHTML = betFilter === 'All' && rows.length > 1 ? `<table class="xt"><tr><th>Whose pick</th><th>W-L</th><th>Profit</th><th>ROI</th><th>Worst streak</th></tr>
+    ${rows.sort((a, b) => b[1].profit - a[1].profit).map(([x, v]) => `<tr><td><b>${esc(x)}</b></td><td>${v.wins}-${v.losses}</td><td class="${v.profit >= 0 ? 'good' : 'bad'}">${money(v.profit)}</td><td>${v.roi == null ? '—' : pct(v.roi)}</td><td>${v.worst}</td></tr>`).join('')}</table>` : '';
+  $('#betList').innerHTML = list.map((b) => `<div class="bet ${b.status}">
+    <div class="bet-top"><b>${esc(b.pick)}</b><span class="bet-odds">${M.fmtAm(b.price)}</span></div>
+    <div class="muted small">${esc(b.source || 'Me')} · ${new Date(b.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · ${money(b.stake)} to win ${money(b.stake * (M.amToDec(b.price) - 1))}</div>
+    <div class="status-btns">
+      <button data-bet="${b.id}" data-status="won" class="won-btn ${b.status === 'won' ? 'on' : ''}">Won</button>
+      <button data-bet="${b.id}" data-status="lost" class="lost-btn ${b.status === 'lost' ? 'on' : ''}">Lost</button>
+      <button data-bet="${b.id}" data-status="push" class="${b.status === 'push' ? 'on' : ''}">Push</button>
+      <button data-del="${b.id}" class="del">Delete</button>
+    </div>
+  </div>`).join('') || `<p class="muted">No bets yet. Tap <b>+ Add a bet</b> after you place one in FanDuel.</p>`;
 }
 function exportBets() {
-  const head = ['date', 'sport', 'event', 'pick', 'price', 'stake', 'fair_prob', 'edge', 'status', 'profit'];
-  const lines = bets.map((b) => [b.date, b.sport, b.event, b.pick, b.price, b.stake, b.fairProb, b.ev, b.status, betProfit(b).toFixed(2)].map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(','));
+  const head = ['date', 'source', 'sport', 'event', 'pick', 'price', 'stake', 'fair_prob', 'edge', 'status', 'profit'];
+  const lines = bets.map((b) => [b.date, b.source || 'Me', b.sport, b.event, b.pick, b.price, b.stake, b.fairProb, b.ev, b.status, betProfit(b).toFixed(2)].map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(','));
   const blob = new Blob([[head.join(','), ...lines].join('\n')], { type: 'text/csv' });
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'bets.csv'; a.click();
 }
@@ -403,8 +449,19 @@ function init() {
     if (t.dataset.rlines) getRiserLines(t.dataset.rlines);
     if (t.dataset.rleg) { const [i, pt] = t.dataset.rleg.split('|'); addRiserLeg(Number(i), Number(pt)); }
     if (t.dataset.rm != null) { legs.splice(Number(t.dataset.rm), 1); store.set('legs', legs); renderParlay(); }
-    if (t.dataset.bet) { const b = bets.find((x) => x.id === Number(t.dataset.bet)); b.status = t.dataset.status; store.set('bets', bets); renderBets(); }
-    if (t.dataset.del) { if (confirm('Delete this bet?')) { bets = bets.filter((x) => x.id !== Number(t.dataset.del)); store.set('bets', bets); renderBets(); } }
+    if (t.dataset.bet) { const b = bets.find((x) => x.id === Number(t.dataset.bet)); b.status = b.status === t.dataset.status ? 'open' : t.dataset.status; store.set('bets', bets); renderBets(); }
+    if (t.dataset.del) {
+      if (t.dataset.armed) { bets = bets.filter((x) => x.id !== Number(t.dataset.del)); store.set('bets', bets); renderBets(); }
+      else { t.dataset.armed = '1'; t.textContent = 'Tap again'; t.classList.add('on'); setTimeout(() => { if (t.isConnected) { delete t.dataset.armed; t.textContent = 'Delete'; t.classList.remove('on'); } }, 3000); }
+    }
+    if (t.dataset.filter) { betFilter = t.dataset.filter; renderBets(); }
+    if (t.dataset.src) {
+      if (t.dataset.src === '__new') {
+        const box = document.createElement('input'); box.placeholder = 'Name'; box.className = 'newsrc'; t.replaceWith(box); box.focus();
+        const done = () => { const v = box.value.trim(); if (v && !sources.includes(v)) { sources.push(v); store.set('sources', sources); } if (v) sheetSource = v; renderSheetSources(); };
+        box.addEventListener('blur', done); box.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); box.blur(); } });
+      } else { sheetSource = t.dataset.src; renderSheetSources(); }
+    }
   });
   $('#offered').addEventListener('input', renderParlay);
   $('#sugBtn').addEventListener('click', renderSuggestions);
@@ -418,6 +475,11 @@ function init() {
     logBet({ sport: 'parlay', event: legs.map((l) => l.event).join(' / '), pick: `${legs.length}-leg parlay: ${legs.map((l) => l.label).join(' + ')}`, price: p.offeredAm, fairProb: p.fairProb, ev: p.ev, stake: p.ev > 0 ? stakeFor(p.fairProb, p.offeredAm) : 0 });
   });
   $('#exportBets').addEventListener('click', exportBets);
+  $('#addBet').addEventListener('click', () => openSheet({}));
+  $('#shSave').addEventListener('click', saveSheet);
+  $('#shCancel').addEventListener('click', () => ($('#sheet').hidden = true));
+  $('#sheet').addEventListener('click', (e) => { if (e.target.id === 'sheet') $('#sheet').hidden = true; });
+  ['#shOdds', '#shStake'].forEach((x) => $(x).addEventListener('input', updateSheet));
   $('#settingsForm').addEventListener('submit', (e) => {
     e.preventDefault(); const f = e.target;
     settings = {

@@ -7,7 +7,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#0b1220">
 <title>Edge Finder</title>
-<link rel="stylesheet" href="styles.css?v=4">
+<link rel="stylesheet" href="styles.css?v=5">
 </head>
 <body>
 <header>
@@ -91,9 +91,12 @@
 
   <!-- BETS -->
   <section id="bets" class="tab">
+    <button id="addBet" class="primary big">+ Add a bet</button>
+    <div id="betFilters" class="chips"></div>
     <div id="betSummary" class="summary"></div>
-    <div class="toolbar"><button id="exportBets">Export CSV</button></div>
+    <div id="bySource"></div>
     <div id="betList"></div>
+    <div class="toolbar"><button id="exportBets">Export CSV</button></div>
   </section>
 
   <!-- SETTINGS -->
@@ -116,10 +119,25 @@
   </section>
 </main>
 
+<div id="sheet" class="sheet" hidden>
+  <div class="sheet-body">
+    <h3 id="shTitle">Add a bet</h3>
+    <label>What did you bet? <input id="shPick" placeholder="e.g. Dohnte Meyers 60+ rec yds"></label>
+    <div class="two">
+      <label>Odds <input id="shOdds" inputmode="text" placeholder="+1100"></label>
+      <label>Bet $ <input id="shStake" inputmode="decimal" placeholder="50"></label>
+    </div>
+    <div id="shPayout" class="small good"></div>
+    <div class="small">Whose pick?</div>
+    <div id="shSources" class="srcs"></div>
+    <div id="shWarn" class="warn small"></div>
+    <div class="two"><button id="shCancel">Cancel</button><button id="shSave" class="primary">Save</button></div>
+  </div>
+</div>
 <div id="toast" class="toast"></div>
-<script src="math.js?v=4"></script>
-<script src="demo.js?v=4"></script>
-<script src="risers.js?v=4"></script>
-<script src="app.js?v=4"></script>
+<script src="math.js?v=5"></script>
+<script src="demo.js?v=5"></script>
+<script src="risers.js?v=5"></script>
+<script src="app.js?v=5"></script>
 </body>
 </html>

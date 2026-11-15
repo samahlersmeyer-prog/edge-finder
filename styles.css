@@ -50,3 +50,23 @@ fieldset { border:1px solid var(--line); border-radius:12px; } legend { color:va
 .xt button { padding:2px 9px; }
 .tag.warnbg { background:rgba(255,181,71,.2); color:var(--warn); }
 nav button { padding:10px 6px; }
+
+button.big { width:100%; padding:14px; font-size:17px; margin:4px 0 10px; }
+#betFilters button.on, .srcs button.on { background:var(--accent); border-color:var(--accent); color:#fff; }
+#betFilters button { border-radius:99px; padding:6px 14px; }
+.bet-top { display:flex; justify-content:space-between; gap:8px; } .bet-odds { font-weight:700; }
+.status-btns { margin-top:8px; } .status-btns button { flex:1; padding:8px; font-size:14px; }
+.status-btns .won-btn.on { background:var(--good); border-color:var(--good); color:#06210f; }
+.status-btns .lost-btn.on { background:var(--bad); border-color:var(--bad); color:#2a0707; }
+.status-btns .del { flex:0 0 auto; color:var(--muted); } .status-btns .del.on { background:var(--bad); color:#fff; }
+.sheet { position:fixed; inset:0; background:rgba(0,0,0,.55); display:flex; align-items:flex-end; z-index:20; }
+.sheet[hidden] { display:none; }
+.sheet-body { background:var(--panel); width:100%; max-width:760px; margin:0 auto; border-radius:18px 18px 0 0; padding:16px 16px calc(16px + env(safe-area-inset-bottom)); }
+.sheet-body h3 { margin:0 0 6px; }
+.sheet-body label { display:flex; flex-direction:column; gap:4px; margin:8px 0; font-size:14px; }
+.sheet-body input { font-size:17px; padding:10px; }
+.two { display:grid; grid-template-columns:1fr 1fr; gap:10px; } .two button { padding:13px; font-size:16px; }
+.srcs { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 12px; }
+.srcs button { border-radius:99px; padding:9px 16px; font-size:15px; }
+.srcs input.newsrc { width:110px; border-radius:99px; padding:8px 12px; }
+.two input, .two label { min-width:0; width:100%; box-sizing:border-box; }
