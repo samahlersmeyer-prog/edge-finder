@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0b1220">
+<title>Edge Finder</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header>
+  <div class="brand">Edge<span>Finder</span></div>
+  <div id="status" class="status"></div>
+</header>
+
+<nav id="tabs">
+  <button data-tab="scan" class="active">Scan</button>
+  <button data-tab="props">Props</button>
+  <button data-tab="parlay">Parlay <b id="legCount"></b></button>
+  <button data-tab="bets">Bets</button>
+  <button data-tab="settings">Settings</button>
+</nav>
+
+<main>
+  <!-- SCAN -->
+  <section id="scan" class="tab active">
+    <div class="toolbar">
+      <button id="scanBtn" class="primary">Scan game lines</button>
+      <span id="scanCost" class="muted"></span>
+    </div>
+    <div class="filters">
+      <select id="fSport"><option value="">All sports</option></select>
+      <select id="fMarket"><option value="">All bets</option><option value="h2h">Moneyline</option><option value="spreads">Spread</option><option value="totals">Total</option></select>
+      <label><input type="checkbox" id="fPos" checked> +EV only</label>
+    </div>
+    <div id="scanInfo" class="muted small"></div>
+    <div id="scanResults" class="cards"></div>
+  </section>
+
+  <!-- PROPS -->
+  <section id="props" class="tab">
+    <div class="filters">
+      <select id="pSport"></select>
+      <button id="pLoadGames">Load games</button>
+    </div>
+    <select id="pGame" class="wide" hidden></select>
+    <div id="pMarkets" class="chips" hidden></div>
+    <div class="toolbar">
+      <button id="pScanBtn" class="primary" hidden>Scan props</button>
+      <span id="pCost" class="muted"></span>
+    </div>
+    <label class="small"><input type="checkbox" id="pPos" checked> +EV only</label>
+    <div id="propsInfo" class="muted small"></div>
+    <div id="propsResults" class="cards"></div>
+  </section>
+
+  <!-- PARLAY -->
+  <section id="parlay" class="tab">
+    <p class="muted small">Add legs from Scan or Props. A normal parlay pays the product of the leg prices. Same Game Parlays are priced by FanDuel with correlation built in, so enter the SGP price FanDuel shows you. This assumes the legs are independent, so treat SGP results as rough.</p>
+    <div id="legs"></div>
+    <div class="row">
+      <label>FanDuel price (optional, for SGPs / boosts) <input id="offered" inputmode="numeric" placeholder="e.g. +450"></label>
+    </div>
+    <div id="parlayOut" class="result"></div>
+    <div class="toolbar"><button id="clearLegs">Clear legs</button><button id="logParlay" class="primary">Log parlay</button></div>
+  </section>
+
+  <!-- BETS -->
+  <section id="bets" class="tab">
+    <div id="betSummary" class="summary"></div>
+    <div class="toolbar"><button id="exportBets">Export CSV</button></div>
+    <div id="betList"></div>
+  </section>
+
+  <!-- SETTINGS -->
+  <section id="settings" class="tab">
+    <form id="settingsForm" class="form">
+      <label>The Odds API key <input name="apiKey" autocomplete="off" placeholder="Leave blank to use demo data"></label>
+      <p class="muted small">Get a free key at the-odds-api.com. It stays on this device only (saved in your browser).</p>
+      <label>Bankroll ($) <input name="bankroll" inputmode="decimal"></label>
+      <label>Kelly fraction <select name="kellyFraction"><option value="0.1">10% (very safe)</option><option value="0.25">25% (recommended)</option><option value="0.5">50% (aggressive)</option></select></label>
+      <label>Max stake per bet (% of bankroll) <input name="maxStakePct" inputmode="decimal"></label>
+      <label>Minimum edge to show (%) <input name="minEV" inputmode="decimal"></label>
+      <label>Fair price from <select name="method"><option value="sharp-first">Pinnacle first, else consensus</option><option value="consensus">Consensus of all books</option></select></label>
+      <fieldset><legend>Sports to scan</legend><div id="sportChecks" class="chips"></div></fieldset>
+      <label><input type="checkbox" name="includeLive"> Include games already in progress (live odds go stale fast)</label>
+      <label>Daily stake limit ($) <input name="dailyLimit" inputmode="decimal"></label>
+      <button class="primary" type="submit">Save</button>
+    </form>
+    <div id="quota" class="muted small"></div>
+    <p class="muted small">Gambling problem? Call 1-800-9-WITH-IT (Indiana) or 1-800-GAMBLER.</p>
+  </section>
+</main>
+
+<div id="toast" class="toast"></div>
+<script src="math.js"></script>
+<script src="demo.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

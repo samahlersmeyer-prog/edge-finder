@@ -1,0 +1,309 @@
+/* Edge Finder — finds FanDuel prices that beat the sharp/consensus fair price. */
+const M = window.OddsMath;
+const API = 'https://api.the-odds-api.com/v4';
+const SPORTS = {
+  americanfootball_nfl: 'NFL', americanfootball_ncaaf: 'NCAAF',
+  basketball_nba: 'NBA', basketball_ncaab: 'NCAAB',
+};
+// 10 books = 1 "region" of quota. FanDuel is the target; the rest set the fair price.
+const BOOKS = ['fanduel', 'pinnacle', 'draftkings', 'betmgm', 'williamhill_us', 'betrivers', 'espnbet', 'fanatics', 'lowvig', 'betonlineag'];
+const PROP_MARKETS = {
+  basketball_nba: ['player_points', 'player_rebounds', 'player_assists', 'player_threes', 'player_points_rebounds_assists'],
+  basketball_ncaab: ['player_points', 'player_rebounds', 'player_assists', 'player_threes'],
+  americanfootball_nfl: ['player_pass_yds', 'player_pass_tds', 'player_rush_yds', 'player_reception_yds', 'player_receptions', 'player_anytime_td'],
+  americanfootball_ncaaf: ['player_pass_yds', 'player_rush_yds', 'player_reception_yds', 'player_pass_tds'],
+};
+const MARKET_LABEL = { h2h: 'Moneyline', spreads: 'Spread', totals: 'Total' };
+
+// ---------- storage ----------
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('ef.' + k); return v ? JSON.parse(v) : d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem('ef.' + k, JSON.stringify(v)); } catch {} },
+};
+const DEFAULTS = { apiKey: '', bankroll: 500, kellyFraction: 0.25, maxStakePct: 3, minEV: 1, method: 'sharp-first', sports: Object.keys(SPORTS), includeLive: false, dailyLimit: 100 };
+let settings = { ...DEFAULTS, ...store.get('settings', {}) };
+let legs = store.get('legs', []);
+let bets = store.get('bets', []);
+let scanRows = store.get('lastScan', []);
+let propRows = [];
+const demo = () => !settings.apiKey;
+
+// ---------- helpers ----------
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const money = (n) => (n < 0 ? '-$' : '$') + Math.abs(n).toFixed(2);
+const pct = (n) => (n * 100).toFixed(1) + '%';
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 2500); }
+function when(iso) {
+  const d = new Date(iso); const today = new Date();
+  const day = d.toDateString() === today.toDateString() ? 'Today' : d.toLocaleDateString(undefined, { weekday: 'short', month: 'numeric', day: 'numeric' });
+  return `${day} ${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+}
+function pickLabel(r) {
+  const o = r.outcome; const pt = o.point != null ? (r.market === 'spreads' && o.point > 0 ? `+${o.point}` : o.point) : '';
+  if (r.market === 'h2h') return `${o.name} ML`;
+  if (r.market === 'spreads') return `${o.name} ${pt}`;
+  if (r.market === 'totals') return `${o.name} ${pt}`;
+  const stat = r.market.replace('player_', '').replace(/_/g, ' ');
+  return `${o.description} ${o.name}${pt !== '' ? ' ' + pt : ''} ${stat}`;
+}
+const stakeFor = (fairProb, price) => {
+  const f = M.kelly(fairProb, price, Number(settings.kellyFraction), Number(settings.maxStakePct) / 100);
+  return Math.round(f * Number(settings.bankroll) * 100) / 100;
+};
+function todayStaked() {
+  const t = new Date().toDateString();
+  return bets.filter((b) => new Date(b.date).toDateString() === t).reduce((s, b) => s + b.stake, 0);
+}
+
+// ---------- API ----------
+async function apiGet(path, params) {
+  const url = new URL(API + path);
+  Object.entries({ apiKey: settings.apiKey, ...params }).forEach(([k, v]) => url.searchParams.set(k, v));
+  const res = await fetch(url);
+  const remaining = res.headers.get('x-requests-remaining');
+  if (remaining != null) { store.set('quota', { remaining, used: res.headers.get('x-requests-used'), at: Date.now() }); renderStatus(); }
+  if (!res.ok) {
+    let msg = `${res.status}`; try { msg = (await res.json()).message || msg; } catch {}
+    throw new Error(msg);
+  }
+  return res.json();
+}
+const fetchOdds = (sport) => demo() ? Promise.resolve(OddsDemo.events(sport))
+  : apiGet(`/sports/${sport}/odds`, { bookmakers: BOOKS.join(','), markets: 'h2h,spreads,totals', oddsFormat: 'american' });
+const fetchEvents = (sport) => demo() ? Promise.resolve(OddsDemo.events(sport))
+  : apiGet(`/sports/${sport}/events`, {});
+const fetchEventProps = (sport, ev, markets) => demo() ? Promise.resolve(OddsDemo.eventProps(ev))
+  : apiGet(`/sports/${sport}/events/${ev.id}/odds`, { bookmakers: BOOKS.join(','), markets: markets.join(','), oddsFormat: 'american' });
+
+// ---------- scanning ----------
+function scanOpts() { return { target: 'fanduel', sharp: ['pinnacle'], method: settings.method, minBooks: 2 }; }
+function upcoming(events) {
+  const now = Date.now();
+  return settings.includeLive ? events : events.filter((e) => new Date(e.commence_time).getTime() > now);
+}
+function withMovement(rows) {
+  const prev = store.get('lastFD', {}); const next = {};
+  rows.forEach((r) => {
+    const k = `${r.eventId}|${r.market}|${M.outcomeKey(r.outcome)}`;
+    next[k] = r.fdPrice;
+    if (prev[k] != null && prev[k] !== r.fdPrice) r.prevPrice = prev[k];
+  });
+  store.set('lastFD', { ...prev, ...next });
+  return rows;
+}
+
+async function runScan() {
+  const btn = $('#scanBtn'); btn.disabled = true; btn.textContent = 'Scanning…';
+  const sports = settings.sports; const all = []; const errors = [];
+  for (const s of sports) {
+    try { const evs = upcoming(await fetchOdds(s)); evs.forEach((e) => all.push(...M.scanEvent(e, scanOpts()))); }
+    catch (e) { errors.push(`${SPORTS[s]}: ${e.message}`); }
+  }
+  scanRows = withMovement(all).sort((a, b) => b.ev - a.ev);
+  store.set('lastScan', scanRows); store.set('lastScanAt', Date.now());
+  btn.disabled = false; btn.textContent = 'Scan game lines';
+  if (errors.length) toast(errors.join(' · '));
+  renderScan();
+}
+
+function card(r, where) {
+  const pos = r.ev > 0; const stake = pos ? stakeFor(r.fairProb, r.fdPrice) : 0;
+  const moved = r.prevPrice != null ? `<span class="moved">was ${M.fmtAm(r.prevPrice)}</span>` : '';
+  return `<div class="card ${pos ? 'pos' : ''}">
+    <div class="top"><span class="tag">${esc(SPORTS[r.sport] || r.sport)}</span><span class="muted small">${esc(r.away)} @ ${esc(r.home)} · ${when(r.commence)}</span></div>
+    <div class="pick">${esc(pickLabel(r))}</div>
+    <div class="nums">
+      <div><b>${M.fmtAm(r.fdPrice)}</b><small>FanDuel ${moved}</small></div>
+      <div><b>${M.fmtAm(r.fairAm)}</b><small>Fair (${esc(r.source)}${r.source === 'consensus' ? ', ' + r.books + ' books' : ''})</small></div>
+      <div><b class="${pos ? 'good' : 'bad'}">${pos ? '+' : ''}${pct(r.ev)}</b><small>Edge</small></div>
+      <div><b>${stake ? money(stake) : '—'}</b><small>Bet size</small></div>
+    </div>
+    <div class="actions">
+      <button data-act="leg" data-where="${where}" data-id="${esc(rowId(r))}">+ Parlay</button>
+      <button data-act="log" data-where="${where}" data-id="${esc(rowId(r))}">Log bet</button>
+      <button data-act="fd" data-where="${where}" data-id="${esc(rowId(r))}" class="fd">Copy & open FanDuel</button>
+    </div>
+  </div>`;
+}
+const rowId = (r) => `${r.eventId}|${r.market}|${M.outcomeKey(r.outcome)}`;
+const findRow = (where, id) => (where === 'props' ? propRows : scanRows).find((r) => rowId(r) === id);
+
+function renderScan() {
+  const sport = $('#fSport').value, market = $('#fMarket').value, posOnly = $('#fPos').checked;
+  const min = Number(settings.minEV) / 100;
+  const rows = scanRows.filter((r) => (!sport || r.sport === sport) && (!market || r.market === market) && (!posOnly || r.ev >= min));
+  const at = store.get('lastScanAt');
+  const nPos = scanRows.filter((r) => r.ev >= min).length;
+  $('#scanInfo').textContent = at ? `Last scan ${new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} · ${scanRows.length} FanDuel lines checked · ${nPos} with ${settings.minEV}%+ edge${demo() ? ' · DEMO DATA' : ''}` : 'Tap Scan to pull current lines.';
+  $('#scanResults').innerHTML = rows.length ? rows.slice(0, 150).map((r) => card(r, 'scan')).join('') : (at ? '<p class="muted">Nothing clears your edge filter right now. That is normal; good edges are rare and short-lived.</p>' : '');
+  $('#scanCost').textContent = demo() ? 'Demo mode' : `Uses ${settings.sports.length * 3} credits`;
+}
+
+// ---------- props ----------
+let propEvents = [];
+async function loadPropGames() {
+  const sport = $('#pSport').value;
+  try {
+    propEvents = upcoming(await fetchEvents(sport));
+    $('#pGame').innerHTML = propEvents.map((e) => `<option value="${esc(e.id)}">${esc(e.away_team)} @ ${esc(e.home_team)} · ${when(e.commence_time)}</option>`).join('') || '<option>No upcoming games</option>';
+    $('#pGame').hidden = false;
+    $('#pMarkets').innerHTML = (PROP_MARKETS[sport] || []).map((m, i) => `<label><input type="checkbox" value="${m}" ${i < 3 ? 'checked' : ''}> ${m.replace('player_', '').replace(/_/g, ' ')}</label>`).join('');
+    $('#pMarkets').hidden = false; $('#pScanBtn').hidden = false; updatePropCost();
+  } catch (e) { toast('Could not load games: ' + e.message); }
+}
+const chosenPropMarkets = () => [...document.querySelectorAll('#pMarkets input:checked')].map((i) => i.value);
+function updatePropCost() { $('#pCost').textContent = demo() ? 'Demo mode' : `Up to ${chosenPropMarkets().length} credits`; }
+async function runPropScan() {
+  const sport = $('#pSport').value; const ev = propEvents.find((e) => e.id === $('#pGame').value);
+  const markets = chosenPropMarkets(); if (!ev || !markets.length) return toast('Pick a game and at least one prop');
+  const btn = $('#pScanBtn'); btn.disabled = true; btn.textContent = 'Scanning…';
+  try {
+    const data = await fetchEventProps(sport, ev, markets);
+    propRows = withMovement(M.scanEvent(data, scanOpts())).sort((a, b) => b.ev - a.ev);
+    renderProps();
+  } catch (e) { toast('Props failed: ' + e.message); }
+  btn.disabled = false; btn.textContent = 'Scan props';
+}
+function renderProps() {
+  const min = Number(settings.minEV) / 100; const posOnly = $('#pPos').checked;
+  const rows = propRows.filter((r) => !posOnly || r.ev >= min);
+  $('#propsInfo').textContent = propRows.length ? `${propRows.length} FanDuel props checked · ${propRows.filter((r) => r.ev >= min).length} with ${settings.minEV}%+ edge${demo() ? ' · DEMO DATA' : ''}` : '';
+  $('#propsResults').innerHTML = rows.map((r) => card(r, 'props')).join('') || (propRows.length ? '<p class="muted">No props clear your edge filter.</p>' : '');
+}
+
+// ---------- parlay ----------
+function renderParlay() {
+  $('#legCount').textContent = legs.length ? `(${legs.length})` : '';
+  $('#legs').innerHTML = legs.map((l, i) => `<div class="leg"><div><b>${esc(l.label)}</b><div class="muted small">${M.fmtAm(l.price)} FD · fair ${M.fmtAm(M.probToAm(l.fairProb))} · ${esc(l.event)}</div></div><button data-rm="${i}">✕</button></div>`).join('') || '<p class="muted">No legs yet.</p>';
+  if (legs.length < 2) { $('#parlayOut').innerHTML = ''; return; }
+  const offered = $('#offered').value.trim();
+  const p = M.parlay(legs, offered ? Number(offered.replace('+', '')) : null);
+  const sameGame = new Set(legs.map((l) => l.eventId)).size < legs.length;
+  $('#parlayOut').innerHTML = `
+    <div class="nums">
+      <div><b>${M.fmtAm(p.offeredAm)}</b><small>${offered ? 'FanDuel price' : 'Parlay price'}</small></div>
+      <div><b>${M.fmtAm(p.fairAm)}</b><small>Fair price</small></div>
+      <div><b class="${p.ev > 0 ? 'good' : 'bad'}">${p.ev > 0 ? '+' : ''}${pct(p.ev)}</b><small>Edge</small></div>
+      <div><b>${pct(p.fairProb)}</b><small>Win chance</small></div>
+    </div>
+    ${sameGame ? '<p class="warn small">Two or more legs are from the same game. Those legs are correlated, so this fair price is only an estimate.</p>' : ''}
+    ${p.ev <= 0 ? '<p class="warn small">This parlay is -EV: FanDuel\'s margin stacks with every leg.</p>' : ''}`;
+}
+function addLeg(r) {
+  if (legs.some((l) => l.id === rowId(r))) return toast('Already in parlay');
+  legs.push({ id: rowId(r), eventId: r.eventId, label: pickLabel(r), price: r.fdPrice, fairProb: r.fairProb, event: `${r.away} @ ${r.home}`, sport: r.sport });
+  store.set('legs', legs); renderParlay(); toast('Added to parlay');
+}
+
+// ---------- bets ----------
+function logBet(entry) {
+  const suggested = entry.stake || 0;
+  const input = prompt(`Stake for:\n${entry.pick} ${M.fmtAm(entry.price)}\n\nSuggested: ${money(suggested)}`, suggested ? suggested.toFixed(2) : '');
+  if (input == null) return;
+  const stake = Number(input); if (!(stake > 0)) return toast('Enter a stake');
+  if (todayStaked() + stake > Number(settings.dailyLimit)) {
+    if (!confirm(`This puts you over your ${money(Number(settings.dailyLimit))} daily limit. Log anyway?`)) return;
+  }
+  bets.unshift({ id: Date.now(), date: new Date().toISOString(), status: 'open', ...entry, stake });
+  store.set('bets', bets); renderBets(); toast('Bet logged');
+}
+function betProfit(b) { if (b.status === 'won') return b.stake * (M.amToDec(b.price) - 1); if (b.status === 'lost') return -b.stake; return 0; }
+function renderBets() {
+  const settled = bets.filter((b) => ['won', 'lost', 'push'].includes(b.status));
+  const staked = settled.reduce((s, b) => s + b.stake, 0);
+  const profit = settled.reduce((s, b) => s + betProfit(b), 0);
+  const expected = settled.reduce((s, b) => s + b.stake * (b.ev || 0), 0);
+  const wins = settled.filter((b) => b.status === 'won').length, losses = settled.filter((b) => b.status === 'lost').length;
+  $('#betSummary').innerHTML = `
+    <div><b>${wins}-${losses}</b><small>Record</small></div>
+    <div><b class="${profit >= 0 ? 'good' : 'bad'}">${money(profit)}</b><small>Profit</small></div>
+    <div><b>${staked ? pct(profit / staked) : '—'}</b><small>ROI</small></div>
+    <div><b>${money(expected)}</b><small>Expected profit</small></div>
+    <div><b>${money(bets.filter((b) => b.status === 'open').reduce((s, b) => s + b.stake, 0))}</b><small>Open action</small></div>
+    <div><b>${money(todayStaked())} / ${money(Number(settings.dailyLimit))}</b><small>Today vs limit</small></div>`;
+  $('#betList').innerHTML = bets.map((b) => `<div class="bet ${b.status}">
+    <div><b>${esc(b.pick)}</b> <span class="muted">${M.fmtAm(b.price)}</span>
+      <div class="muted small">${esc(b.event || '')} · ${new Date(b.date).toLocaleDateString()} · ${money(b.stake)} · edge ${b.ev != null ? pct(b.ev) : '—'}</div></div>
+    <div class="status-btns">${['won', 'lost', 'push', 'open'].map((s) => `<button data-bet="${b.id}" data-status="${s}" class="${b.status === s ? 'on' : ''}">${s}</button>`).join('')}<button data-del="${b.id}">✕</button></div>
+  </div>`).join('') || '<p class="muted">No bets logged yet. Results here show whether your edge is real over time; give it 100+ bets before judging.</p>';
+}
+function exportBets() {
+  const head = ['date', 'sport', 'event', 'pick', 'price', 'stake', 'fair_prob', 'edge', 'status', 'profit'];
+  const lines = bets.map((b) => [b.date, b.sport, b.event, b.pick, b.price, b.stake, b.fairProb, b.ev, b.status, betProfit(b).toFixed(2)].map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(','));
+  const blob = new Blob([[head.join(','), ...lines].join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'bets.csv'; a.click();
+}
+
+// ---------- settings / status ----------
+function renderSettings() {
+  const f = $('#settingsForm');
+  ['apiKey', 'bankroll', 'kellyFraction', 'maxStakePct', 'minEV', 'method', 'dailyLimit'].forEach((k) => (f.elements[k].value = settings[k]));
+  f.elements.includeLive.checked = !!settings.includeLive;
+  $('#sportChecks').innerHTML = Object.entries(SPORTS).map(([k, v]) => `<label><input type="checkbox" value="${k}" ${settings.sports.includes(k) ? 'checked' : ''}> ${v}</label>`).join('');
+  const q = store.get('quota');
+  $('#quota').textContent = q ? `API credits remaining: ${q.remaining} (used ${q.used}) as of ${new Date(q.at).toLocaleString()}` : '';
+}
+function renderStatus() {
+  const q = store.get('quota');
+  $('#status').textContent = demo() ? 'DEMO' : q ? `${q.remaining} credits` : 'Live';
+  $('#status').className = 'status ' + (demo() ? 'demo' : '');
+}
+
+// ---------- wiring ----------
+function init() {
+  Object.entries(SPORTS).forEach(([k, v]) => {
+    $('#fSport').insertAdjacentHTML('beforeend', `<option value="${k}">${v}</option>`);
+    $('#pSport').insertAdjacentHTML('beforeend', `<option value="${k}">${v}</option>`);
+  });
+  document.querySelectorAll('#tabs button').forEach((b) => b.addEventListener('click', () => {
+    document.querySelectorAll('#tabs button, .tab').forEach((x) => x.classList.remove('active'));
+    b.classList.add('active'); $('#' + b.dataset.tab).classList.add('active');
+    if (b.dataset.tab === 'bets') renderBets(); if (b.dataset.tab === 'parlay') renderParlay();
+  }));
+  $('#scanBtn').addEventListener('click', runScan);
+  ['#fSport', '#fMarket', '#fPos'].forEach((s) => $(s).addEventListener('change', renderScan));
+  $('#pLoadGames').addEventListener('click', loadPropGames);
+  $('#pMarkets').addEventListener('change', updatePropCost);
+  $('#pScanBtn').addEventListener('click', runPropScan);
+  $('#pPos').addEventListener('change', renderProps);
+
+  document.body.addEventListener('click', async (e) => {
+    const t = e.target.closest('button'); if (!t) return;
+    if (t.dataset.act) {
+      const r = findRow(t.dataset.where, t.dataset.id); if (!r) return;
+      if (t.dataset.act === 'leg') addLeg(r);
+      if (t.dataset.act === 'log') logBet({ sport: r.sport, event: `${r.away} @ ${r.home}`, pick: pickLabel(r), price: r.fdPrice, fairProb: r.fairProb, ev: r.ev, stake: r.ev > 0 ? stakeFor(r.fairProb, r.fdPrice) : 0 });
+      if (t.dataset.act === 'fd') {
+        try { await navigator.clipboard.writeText(`${pickLabel(r)} ${M.fmtAm(r.fdPrice)}`); } catch {}
+        window.open('https://sportsbook.fanduel.com/', '_blank');
+      }
+    }
+    if (t.dataset.rm != null) { legs.splice(Number(t.dataset.rm), 1); store.set('legs', legs); renderParlay(); }
+    if (t.dataset.bet) { const b = bets.find((x) => x.id === Number(t.dataset.bet)); b.status = t.dataset.status; store.set('bets', bets); renderBets(); }
+    if (t.dataset.del) { if (confirm('Delete this bet?')) { bets = bets.filter((x) => x.id !== Number(t.dataset.del)); store.set('bets', bets); renderBets(); } }
+  });
+  $('#offered').addEventListener('input', renderParlay);
+  $('#clearLegs').addEventListener('click', () => { legs = []; store.set('legs', legs); renderParlay(); });
+  $('#logParlay').addEventListener('click', () => {
+    if (legs.length < 2) return toast('Add at least 2 legs');
+    const offered = $('#offered').value.trim();
+    const p = M.parlay(legs, offered ? Number(offered.replace('+', '')) : null);
+    logBet({ sport: 'parlay', event: legs.map((l) => l.event).join(' / '), pick: `${legs.length}-leg parlay: ${legs.map((l) => l.label).join(' + ')}`, price: p.offeredAm, fairProb: p.fairProb, ev: p.ev, stake: p.ev > 0 ? stakeFor(p.fairProb, p.offeredAm) : 0 });
+  });
+  $('#exportBets').addEventListener('click', exportBets);
+  $('#settingsForm').addEventListener('submit', (e) => {
+    e.preventDefault(); const f = e.target;
+    settings = {
+      ...settings, apiKey: f.elements.apiKey.value.trim(), bankroll: Number(f.elements.bankroll.value) || 0,
+      kellyFraction: Number(f.elements.kellyFraction.value), maxStakePct: Number(f.elements.maxStakePct.value) || 3,
+      minEV: Number(f.elements.minEV.value) || 0, method: f.elements.method.value, includeLive: f.elements.includeLive.checked,
+      dailyLimit: Number(f.elements.dailyLimit.value) || 0,
+      sports: [...document.querySelectorAll('#sportChecks input:checked')].map((i) => i.value),
+    };
+    store.set('settings', settings); renderStatus(); renderScan(); toast('Saved');
+  });
+
+  renderSettings(); renderStatus(); renderScan(); renderParlay();
+}
+init();

@@ -1,0 +1,45 @@
+:root { --bg:#0b1220; --panel:#131c2e; --line:#22304a; --text:#e8edf6; --muted:#8b98b0; --accent:#1493ff; --good:#2fd47e; --bad:#ff6b6b; --warn:#ffb547; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--text); font:15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding-bottom:env(safe-area-inset-bottom); }
+header { display:flex; justify-content:space-between; align-items:center; padding:calc(12px + env(safe-area-inset-top)) 16px 10px; }
+.brand { font-weight:800; font-size:20px; letter-spacing:-.5px; } .brand span { color:var(--accent); }
+.status { font-size:12px; padding:3px 8px; border-radius:99px; background:var(--panel); color:var(--muted); } .status.demo { color:var(--warn); }
+nav { display:flex; gap:4px; padding:0 12px; position:sticky; top:0; background:var(--bg); z-index:5; border-bottom:1px solid var(--line); overflow-x:auto; }
+nav button { flex:1; background:none; border:0; color:var(--muted); padding:10px 8px; font-weight:600; border-bottom:2px solid transparent; white-space:nowrap; }
+nav button.active { color:var(--text); border-color:var(--accent); }
+main { padding:12px; max-width:760px; margin:0 auto; }
+.tab { display:none; } .tab.active { display:block; }
+button { font:inherit; background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:10px; padding:8px 12px; cursor:pointer; }
+button.primary { background:var(--accent); border-color:var(--accent); font-weight:700; }
+button:disabled { opacity:.6; }
+select, input:not([type=checkbox]) { font:inherit; background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:10px; padding:8px 10px; }
+.wide { width:100%; margin:8px 0; }
+.toolbar, .filters { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:8px 0; }
+.muted { color:var(--muted); } .small { font-size:13px; }
+.cards { display:grid; gap:10px; margin-top:8px; }
+.card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:12px; }
+.card.pos { border-color:rgba(47,212,126,.45); }
+.top { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.tag { font-size:11px; font-weight:700; background:var(--line); padding:2px 6px; border-radius:6px; }
+.pick { font-size:17px; font-weight:700; margin:6px 0 8px; }
+.nums, .summary { display:grid; grid-template-columns:repeat(4, 1fr); gap:6px; }
+.summary { grid-template-columns:repeat(3, 1fr); background:var(--panel); border-radius:14px; padding:12px; }
+.nums div, .summary div { display:flex; flex-direction:column; }
+.nums b, .summary b { font-size:16px; } .nums small, .summary small { color:var(--muted); font-size:11px; }
+.good { color:var(--good); } .bad { color:var(--bad); } .warn { color:var(--warn); }
+.moved { color:var(--warn); }
+.actions { display:flex; gap:6px; margin-top:10px; flex-wrap:wrap; } .actions button { font-size:13px; padding:6px 10px; }
+.actions .fd { margin-left:auto; border-color:var(--accent); color:var(--accent); }
+.chips { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0; }
+.chips label { background:var(--panel); border:1px solid var(--line); border-radius:99px; padding:5px 10px; font-size:13px; }
+.leg, .bet { display:flex; justify-content:space-between; gap:8px; align-items:center; background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:10px; margin:6px 0; }
+.bet { flex-direction:column; align-items:stretch; }
+.bet.won { border-color:rgba(47,212,126,.5); } .bet.lost { border-color:rgba(255,107,107,.45); }
+.status-btns { display:flex; gap:4px; flex-wrap:wrap; } .status-btns button { font-size:12px; padding:4px 8px; } .status-btns button.on { background:var(--accent); border-color:var(--accent); }
+.result { background:var(--panel); border-radius:14px; padding:12px; margin:10px 0; } .result:empty { display:none; }
+.row label, .form label { display:flex; flex-direction:column; gap:4px; margin:10px 0; font-size:14px; }
+.form label:has(input[type=checkbox]) { flex-direction:row; align-items:center; }
+fieldset { border:1px solid var(--line); border-radius:12px; } legend { color:var(--muted); font-size:13px; }
+.toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%) translateY(80px); background:#1e2a42; padding:10px 16px; border-radius:12px; transition:.25s; max-width:90%; }
+.toast.show { transform:translateX(-50%) translateY(0); }
+@media (max-width:420px) { .nums b { font-size:15px; } }
