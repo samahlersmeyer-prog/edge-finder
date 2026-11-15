@@ -63,6 +63,18 @@
         (markets[mk] = markets[mk] || { key: mk, last_update: new Date().toISOString(), outcomes: [] }).outcomes.push(
           { name: 'Over', description: player, price: o, point: line }, { name: 'Under', description: player, price: u, point: line });
       }
+      // Milestone "X+" lines (Over only), priced off the main line with some book noise.
+      for (const [player, mk, line] of list) {
+        if (!['player_points', 'player_rush_yds', 'player_reception_yds'].includes(mk)) continue;
+        const altKey = mk + '_alternate';
+        const step = mk === 'player_points' ? 5 : 25;
+        const alt = (markets[altKey] = markets[altKey] || { key: altKey, last_update: new Date().toISOString(), outcomes: [] });
+        for (const n of [Math.round(line / step) * step - step, Math.round(line / step) * step, Math.round(line / step) * step + step]) {
+          if (n <= 0) continue;
+          const p = M.milestoneProb(altKey, line, 0.5, n - 0.5);
+          alt.outcomes.push({ name: 'Over', description: player, price: price(p, vig * 1.6, n * 0 + (key === 'fanduel' ? 0.03 : 0.015)), point: n - 0.5 });
+        }
+      }
       return { key, title: t, markets: Object.values(markets) };
     });
     return { ...event, bookmakers };

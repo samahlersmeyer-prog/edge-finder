@@ -65,6 +65,13 @@
     </div>
     <div id="parlayOut" class="result"></div>
     <div class="toolbar"><button id="clearLegs">Clear legs</button><button id="logParlay" class="primary">Log parlay</button></div>
+    <h3>Build me a parlay</h3>
+    <p class="muted small">Combines the best +EV legs from your latest Scan and Props results, one leg per game so the legs are independent.</p>
+    <div class="toolbar">
+      <select id="sugSize"><option value="2">2 legs</option><option value="3" selected>3 legs</option><option value="4">4 legs</option></select>
+      <button id="sugBtn" class="primary">Suggest parlays</button>
+    </div>
+    <div id="suggestions" class="cards"></div>
   </section>
 
   <!-- BETS -->

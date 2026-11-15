@@ -8,9 +8,9 @@ const SPORTS = {
 // 10 books = 1 "region" of quota. FanDuel is the target; the rest set the fair price.
 const BOOKS = ['fanduel', 'pinnacle', 'draftkings', 'betmgm', 'williamhill_us', 'betrivers', 'espnbet', 'fanatics', 'lowvig', 'betonlineag'];
 const PROP_MARKETS = {
-  basketball_nba: ['player_points', 'player_rebounds', 'player_assists', 'player_threes', 'player_points_rebounds_assists'],
+  basketball_nba: ['player_points', 'player_rebounds', 'player_assists', 'player_threes', 'player_points_rebounds_assists', 'player_points_alternate', 'player_rebounds_alternate', 'player_assists_alternate', 'player_threes_alternate'],
   basketball_ncaab: ['player_points', 'player_rebounds', 'player_assists', 'player_threes'],
-  americanfootball_nfl: ['player_pass_yds', 'player_pass_tds', 'player_rush_yds', 'player_reception_yds', 'player_receptions', 'player_anytime_td'],
+  americanfootball_nfl: ['player_pass_yds', 'player_pass_tds', 'player_rush_yds', 'player_reception_yds', 'player_receptions', 'player_anytime_td', 'player_pass_yds_alternate', 'player_rush_yds_alternate', 'player_reception_yds_alternate', 'player_receptions_alternate'],
   americanfootball_ncaaf: ['player_pass_yds', 'player_rush_yds', 'player_reception_yds', 'player_pass_tds'],
 };
 const MARKET_LABEL = { h2h: 'Moneyline', spreads: 'Spread', totals: 'Total' };
@@ -25,7 +25,7 @@ let settings = { ...DEFAULTS, ...store.get('settings', {}) };
 let legs = store.get('legs', []);
 let bets = store.get('bets', []);
 let scanRows = store.get('lastScan', []);
-let propRows = [];
+let propRows = store.get('lastProps', []);
 const demo = () => !settings.apiKey;
 
 // ---------- helpers ----------
@@ -44,7 +44,8 @@ function pickLabel(r) {
   if (r.market === 'h2h') return `${o.name} ML`;
   if (r.market === 'spreads') return `${o.name} ${pt}`;
   if (r.market === 'totals') return `${o.name} ${pt}`;
-  const stat = r.market.replace('player_', '').replace(/_/g, ' ');
+  const stat = r.market.replace('player_', '').replace('_alternate', '').replace(/_/g, ' ');
+  if (r.milestone) return `${o.description} ${Math.ceil(o.point)}+ ${stat}`;
   return `${o.description} ${o.name}${pt !== '' ? ' ' + pt : ''} ${stat}`;
 }
 const stakeFor = (fairProb, price) => {
@@ -148,11 +149,16 @@ async function loadPropGames() {
     propEvents = upcoming(await fetchEvents(sport));
     $('#pGame').innerHTML = propEvents.map((e) => `<option value="${esc(e.id)}">${esc(e.away_team)} @ ${esc(e.home_team)} · ${when(e.commence_time)}</option>`).join('') || '<option>No upcoming games</option>';
     $('#pGame').hidden = false;
-    $('#pMarkets').innerHTML = (PROP_MARKETS[sport] || []).map((m, i) => `<label><input type="checkbox" value="${m}" ${i < 3 ? 'checked' : ''}> ${m.replace('player_', '').replace(/_/g, ' ')}</label>`).join('');
+    $('#pMarkets').innerHTML = (PROP_MARKETS[sport] || []).map((m, i) => `<label><input type="checkbox" value="${m}" ${i < 3 ? 'checked' : ''}> ${m.endsWith('_alternate') ? m.replace('player_', '').replace('_alternate', '').replace(/_/g, ' ') + ' X+' : m.replace('player_', '').replace(/_/g, ' ')}</label>`).join('');
     $('#pMarkets').hidden = false; $('#pScanBtn').hidden = false; updatePropCost();
   } catch (e) { toast('Could not load games: ' + e.message); }
 }
-const chosenPropMarkets = () => [...document.querySelectorAll('#pMarkets input:checked')].map((i) => i.value);
+const chosenPropMarkets = () => {
+  const picked = [...document.querySelectorAll('#pMarkets input:checked')].map((i) => i.value);
+  // Milestone (X+) lines are priced from the player's main line, so fetch that too.
+  picked.filter((m) => m.endsWith('_alternate')).forEach((m) => { const main = m.replace('_alternate', ''); if (!picked.includes(main)) picked.push(main); });
+  return picked;
+};
 function updatePropCost() { $('#pCost').textContent = demo() ? 'Demo mode' : `Up to ${chosenPropMarkets().length} credits`; }
 async function runPropScan() {
   const sport = $('#pSport').value; const ev = propEvents.find((e) => e.id === $('#pGame').value);
@@ -160,7 +166,10 @@ async function runPropScan() {
   const btn = $('#pScanBtn'); btn.disabled = true; btn.textContent = 'Scanning…';
   try {
     const data = await fetchEventProps(sport, ev, markets);
-    propRows = withMovement(M.scanEvent(data, scanOpts())).sort((a, b) => b.ev - a.ev);
+    const seen = new Set();
+    const rows = [...M.scanEvent(data, scanOpts()), ...M.scanMilestones(data, scanOpts())].filter((r) => { const k = rowId(r); if (seen.has(k)) return false; seen.add(k); return true; });
+    propRows = withMovement(rows).sort((a, b) => b.ev - a.ev);
+    store.set('lastProps', propRows);
     renderProps();
   } catch (e) { toast('Props failed: ' + e.message); }
   btn.disabled = false; btn.textContent = 'Scan props';
@@ -194,6 +203,24 @@ function addLeg(r) {
   if (legs.some((l) => l.id === rowId(r))) return toast('Already in parlay');
   legs.push({ id: rowId(r), eventId: r.eventId, label: pickLabel(r), price: r.fdPrice, fairProb: r.fairProb, event: `${r.away} @ ${r.home}`, sport: r.sport });
   store.set('legs', legs); renderParlay(); toast('Added to parlay');
+}
+
+function renderSuggestions() {
+  const size = Number($('#sugSize').value);
+  const pool = [...scanRows, ...propRows];
+  const list = M.suggestParlays(pool, { sizes: [size], minEV: Number(settings.minEV) / 100 });
+  window._suggestions = list;
+  $('#suggestions').innerHTML = list.length ? list.map((p, i) => `<div class="card pos">
+      <div class="pick">${p.legs.length}-leg parlay · ${M.fmtAm(p.straightAm)}</div>
+      ${p.legs.map((l) => `<div class="small">• ${esc(pickLabel(l))} <span class="muted">${M.fmtAm(l.fdPrice)} · ${esc(l.away)} @ ${esc(l.home)}</span></div>`).join('')}
+      <div class="nums" style="margin-top:8px">
+        <div><b>${M.fmtAm(p.fairAm)}</b><small>Fair price</small></div>
+        <div><b class="good">+${pct(p.ev)}</b><small>Edge</small></div>
+        <div><b>${pct(p.fairProb)}</b><small>Win chance</small></div>
+        <div><b>${money(stakeFor(p.fairProb, p.straightAm))}</b><small>Bet size</small></div>
+      </div>
+      <div class="actions"><button data-sug="${i}" class="fd">Use these legs</button></div>
+    </div>`).join('') : `<p class="muted">Not enough +EV legs from different games yet. Run Scan (and Props) first, or lower your minimum edge in Settings.</p>`;
 }
 
 // ---------- bets ----------
@@ -279,11 +306,17 @@ function init() {
         window.open('https://sportsbook.fanduel.com/', '_blank');
       }
     }
+    if (t.dataset.sug != null) {
+      const p = window._suggestions[Number(t.dataset.sug)];
+      legs = []; p.legs.forEach((r) => legs.push({ id: rowId(r), eventId: r.eventId, label: pickLabel(r), price: r.fdPrice, fairProb: r.fairProb, event: `${r.away} @ ${r.home}`, sport: r.sport }));
+      store.set('legs', legs); $('#offered').value = ''; renderParlay(); window.scrollTo(0, 0); toast('Legs loaded — check them in FanDuel');
+    }
     if (t.dataset.rm != null) { legs.splice(Number(t.dataset.rm), 1); store.set('legs', legs); renderParlay(); }
     if (t.dataset.bet) { const b = bets.find((x) => x.id === Number(t.dataset.bet)); b.status = t.dataset.status; store.set('bets', bets); renderBets(); }
     if (t.dataset.del) { if (confirm('Delete this bet?')) { bets = bets.filter((x) => x.id !== Number(t.dataset.del)); store.set('bets', bets); renderBets(); } }
   });
   $('#offered').addEventListener('input', renderParlay);
+  $('#sugBtn').addEventListener('click', renderSuggestions);
   $('#clearLegs').addEventListener('click', () => { legs = []; store.set('legs', legs); renderParlay(); });
   $('#logParlay').addEventListener('click', () => {
     if (legs.length < 2) return toast('Add at least 2 legs');
