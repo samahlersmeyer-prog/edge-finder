@@ -223,6 +223,95 @@ function renderSuggestions() {
     </div>`).join('') : `<p class="muted">Not enough +EV legs from different games yet. Run Scan (and Props) first, or lower your minimum edge in Settings.</p>`;
 }
 
+// ---------- role risers ----------
+let rGames = [], rResults = [], rLines = {}; // rLines[espnGameId] = { byPlayer: { norm: { main, mainOverP, alts: [{point, price}] } }, oddsEventId }
+async function loadRiserGames() {
+  try {
+    rGames = await Risers.todaysGames();
+    $('#rGames').innerHTML = rGames.map((g) => `<label><input type="checkbox" value="${g.id}" ${g.state === 'pre' ? 'checked' : ''}> ${esc(g.away.abbr)} @ ${esc(g.home.abbr)} <span class="muted">${g.state === 'pre' ? new Date(g.date).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : g.state === 'in' ? 'live' : 'final'}</span></label>`).join('') || '<p class="muted">No NBA games today.</p>';
+    $('#rGames').hidden = false; $('#rFilters').hidden = !rGames.length;
+  } catch (e) { toast('ESPN not reachable: ' + e.message); }
+}
+async function runRisers() {
+  const ids = [...document.querySelectorAll('#rGames input:checked')].map((i) => i.value);
+  const games = rGames.filter((g) => ids.includes(g.id));
+  if (!games.length) return toast('Pick at least one game');
+  const btn = $('#rScan'); btn.disabled = true; btn.textContent = 'Scanning…';
+  try {
+    rResults = await Risers.scan(games, {
+      maxPPG: Number($('#rMaxPPG').value) || 14, minMinUp: Number($('#rMinUp').value) || 0,
+      onProgress: (d, n) => { $('#rInfo').textContent = `Checking players… ${d}/${n}`; },
+    });
+    $('#rInfo').textContent = `${rResults.length} risers found in ${games.length} game${games.length > 1 ? 's' : ''} · stats via ESPN`;
+    renderRisers();
+  } catch (e) { toast('Riser scan failed: ' + e.message); }
+  btn.disabled = false; btn.textContent = 'Find risers';
+}
+async function getRiserLines(espnGameId) {
+  const g = rGames.find((x) => x.id === espnGameId); if (!g) return;
+  if (demo()) return toast('Add your Odds API key in Settings to pull FanDuel lines');
+  try {
+    const events = await fetchEvents('basketball_nba');
+    const ev = events.find((e) => Risers.nickname(e.home_team) === Risers.nickname(g.home.name) && Risers.nickname(e.away_team) === Risers.nickname(g.away.name));
+    if (!ev) return toast('Could not match this game in the odds feed');
+    const data = await fetchEventProps('basketball_nba', ev, ['player_points', 'player_points_alternate']);
+    const byPlayer = {};
+    for (const b of data.bookmakers || []) {
+      for (const m of b.markets) {
+        for (const o of m.outcomes) {
+          const k = Risers.normName(o.description); const rec = (byPlayer[k] = byPlayer[k] || { alts: [], mains: [] });
+          if (b.key === 'fanduel' && m.key === 'player_points_alternate' && o.name === 'Over') rec.alts.push({ point: o.point, price: o.price });
+          if (b.key === 'fanduel' && m.key === 'player_points' && o.name === 'Over') rec.fdMain = { point: o.point, price: o.price };
+        }
+      }
+    }
+    // Market-based fair prices for the X+ lines, reusing the main scanner
+    const msRows = M.scanMilestones(data, scanOpts());
+    msRows.forEach((r) => { const rec = byPlayer[Risers.normName(r.outcome.description)]; if (rec) { const a = rec.alts.find((x) => x.point === r.outcome.point); if (a) a.marketFair = r.fairProb; } });
+    rLines[espnGameId] = { byPlayer, ev };
+    renderRisers();
+  } catch (e) { toast('Lines failed: ' + e.message); }
+}
+function riserCard(p, idx) {
+  const s = p.stats; const f1 = (x) => x.toFixed(1);
+  const lines = rLines[p.game.id]; const rec = lines && lines.byPlayer[Risers.normName(p.name)];
+  let linesHtml = '';
+  if (lines && !rec) linesHtml = '<p class="muted small">No FanDuel points lines posted for him yet.</p>';
+  if (rec) {
+    const alts = rec.alts.filter((a) => a.point >= 4.5 && a.point <= 29.5).sort((a, b) => a.point - b.point).slice(0, 5);
+    linesHtml = `${rec.fdMain ? `<div class="small">FanDuel line: <b>${rec.fdMain.point}</b> pts (${M.fmtAm(rec.fdMain.price)} over) · last-5 avg <b class="${s.recent.pts > rec.fdMain.point ? 'good' : ''}">${f1(s.recent.pts)}</b></div>` : ''}
+      <table class="xt"><tr><th>Bet</th><th>FanDuel</th><th>Market fair</th><th>Form fair</th><th>Form edge</th><th></th></tr>
+      ${alts.map((a, j) => {
+        const fp = Risers.formProb(s.recent.pts, a.point); const edge = M.ev(fp, a.price);
+        return `<tr><td>${Math.ceil(a.point)}+</td><td>${M.fmtAm(a.price)}</td><td>${a.marketFair ? M.fmtAm(M.probToAm(a.marketFair)) : '—'}</td><td>${M.fmtAm(M.probToAm(fp))}</td><td class="${edge > 0 ? 'good' : 'bad'}">${edge > 0 ? '+' : ''}${pct(edge)}</td><td><button data-rleg="${idx}|${a.point}">+</button></td></tr>`;
+      }).join('')}</table>`;
+  }
+  const hit = (n) => s.last.filter((x) => x >= n).length;
+  return `<div class="card">
+    <div class="top"><span class="tag">${esc(p.team.abbr)}</span><span class="muted small">vs ${esc(p.opp.abbr)} · ${new Date(p.game.date).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>${p.status ? `<span class="tag warnbg">${esc(p.status.status)}</span>` : ''}</div>
+    <div class="pick">${esc(p.name)} <span class="muted small">${esc(p.pos)}</span></div>
+    <div class="nums">
+      <div><b>${f1(s.before.min)} → ${f1(s.recent.min)}</b><small>Minutes (+${f1(s.minUp)})</small></div>
+      <div><b>${f1(s.before.pts)} → ${f1(s.recent.pts)}</b><small>Points</small></div>
+      <div><b>${f1(s.before.fga)} → ${f1(s.recent.fga)}</b><small>Shots (FGA)</small></div>
+      <div><b>${hit(10)}/5</b><small>10+ pts last 5</small></div>
+    </div>
+    <div class="small muted" style="margin-top:6px">Last 5 (newest first): ${s.last.join(', ')} pts · ${s.lastMin.join(', ')} min</div>
+    ${p.teammatesOut.length ? `<div class="small warn">Teammates out: ${p.teammatesOut.map((t) => esc(t.name)).join(', ')} (minutes may drop when they return)</div>` : ''}
+    ${p.status?.note ? `<div class="small muted">${esc(p.status.note)}</div>` : ''}
+    ${linesHtml}
+    ${!lines ? `<div class="actions"><button data-rlines="${p.game.id}" class="fd">Get FanDuel lines for this game</button></div>` : ''}
+  </div>`;
+}
+function renderRisers() {
+  $('#rResults').innerHTML = rResults.map(riserCard).join('') || (rResults && $('#rInfo').textContent.includes('found') ? '<p class="muted">No one fits those filters. Try a lower minutes increase or a higher max PPG.</p>' : '');
+}
+function addRiserLeg(idx, point) {
+  const p = rResults[idx]; const rec = rLines[p.game.id].byPlayer[Risers.normName(p.name)];
+  const a = rec.alts.find((x) => x.point === point); const fp = Risers.formProb(p.stats.recent.pts, point);
+  addLeg({ eventId: 'espn' + p.game.id, sport: 'basketball_nba', home: p.game.home.name, away: p.game.away.name, market: 'player_points_alternate', milestone: true, outcome: { name: 'Over', description: p.name, point }, fdPrice: a.price, fairProb: fp, ev: M.ev(fp, a.price) });
+}
+
 // ---------- bets ----------
 function logBet(entry) {
   const suggested = entry.stake || 0;
@@ -311,12 +400,16 @@ function init() {
       legs = []; p.legs.forEach((r) => legs.push({ id: rowId(r), eventId: r.eventId, label: pickLabel(r), price: r.fdPrice, fairProb: r.fairProb, event: `${r.away} @ ${r.home}`, sport: r.sport }));
       store.set('legs', legs); $('#offered').value = ''; renderParlay(); window.scrollTo(0, 0); toast('Legs loaded — check them in FanDuel');
     }
+    if (t.dataset.rlines) getRiserLines(t.dataset.rlines);
+    if (t.dataset.rleg) { const [i, pt] = t.dataset.rleg.split('|'); addRiserLeg(Number(i), Number(pt)); }
     if (t.dataset.rm != null) { legs.splice(Number(t.dataset.rm), 1); store.set('legs', legs); renderParlay(); }
     if (t.dataset.bet) { const b = bets.find((x) => x.id === Number(t.dataset.bet)); b.status = t.dataset.status; store.set('bets', bets); renderBets(); }
     if (t.dataset.del) { if (confirm('Delete this bet?')) { bets = bets.filter((x) => x.id !== Number(t.dataset.del)); store.set('bets', bets); renderBets(); } }
   });
   $('#offered').addEventListener('input', renderParlay);
   $('#sugBtn').addEventListener('click', renderSuggestions);
+  $('#rLoad').addEventListener('click', loadRiserGames);
+  $('#rScan').addEventListener('click', runRisers);
   $('#clearLegs').addEventListener('click', () => { legs = []; store.set('legs', legs); renderParlay(); });
   $('#logParlay').addEventListener('click', () => {
     if (legs.length < 2) return toast('Add at least 2 legs');

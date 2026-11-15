@@ -43,3 +43,10 @@ fieldset { border:1px solid var(--line); border-radius:12px; } legend { color:va
 .toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%) translateY(80px); background:#1e2a42; padding:10px 16px; border-radius:12px; transition:.25s; max-width:90%; }
 .toast.show { transform:translateX(-50%) translateY(0); }
 @media (max-width:420px) { .nums b { font-size:15px; } }
+
+.xt { width:100%; border-collapse:collapse; margin-top:8px; font-size:13px; }
+.xt th { text-align:left; color:var(--muted); font-weight:600; font-size:11px; padding:4px 2px; }
+.xt td { padding:5px 2px; border-top:1px solid var(--line); }
+.xt button { padding:2px 9px; }
+.tag.warnbg { background:rgba(255,181,71,.2); color:var(--warn); }
+nav button { padding:10px 6px; }

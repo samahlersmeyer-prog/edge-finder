@@ -18,6 +18,7 @@
 <nav id="tabs">
   <button data-tab="scan" class="active">Scan</button>
   <button data-tab="props">Props</button>
+  <button data-tab="risers">Risers</button>
   <button data-tab="parlay">Parlay <b id="legCount"></b></button>
   <button data-tab="bets">Bets</button>
   <button data-tab="settings">Settings</button>
@@ -54,6 +55,20 @@
     <label class="small"><input type="checkbox" id="pPos" checked> +EV only</label>
     <div id="propsInfo" class="muted small"></div>
     <div id="propsResults" class="cards"></div>
+  </section>
+
+  <!-- RISERS -->
+  <section id="risers" class="tab">
+    <p class="muted small">Finds NBA role players whose minutes and scoring over the last 5 games are up versus earlier this season, so their lines may be lagging. Stats come from ESPN for free; FanDuel lines use your Odds API credits (about 2 per game).</p>
+    <div class="toolbar"><button id="rLoad">Load tonight's games</button></div>
+    <div id="rGames" class="chips" hidden></div>
+    <div class="filters" id="rFilters" hidden>
+      <label class="small">Max season PPG <input id="rMaxPPG" inputmode="decimal" value="14" size="3"></label>
+      <label class="small">Min. minutes increase <input id="rMinUp" inputmode="decimal" value="3" size="3"></label>
+      <button id="rScan" class="primary">Find risers</button>
+    </div>
+    <div id="rInfo" class="muted small"></div>
+    <div id="rResults" class="cards"></div>
   </section>
 
   <!-- PARLAY -->
@@ -104,6 +119,7 @@
 <div id="toast" class="toast"></div>
 <script src="math.js"></script>
 <script src="demo.js"></script>
+<script src="risers.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
